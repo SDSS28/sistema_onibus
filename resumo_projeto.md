@@ -48,6 +48,9 @@ python -m PyInstaller --onefile --windowed --name "EmissorAutorizacaoOnibus" ^
     --icon="brasao_guarapari.ico" --add-data "brasao_guarapari.png;." sistema_onibus.py
 ```
 Saída em `dist\EmissorAutorizacaoOnibus.exe` — único arquivo a distribuir.
+Gerar dentro da pasta do usuário (ex.: `%USERPROFILE%\Emissor`) para evitar
+`PermissionError` ao regravar o `.spec`. Antes de gerar de novo, apagar `build`,
+`dist` e o `.spec` antigos. Usar `py` (não `python`) na VM de build.
 
 ## Distribuição planejada
 - `.exe` copiado para pasta de rede somente-leitura (ex: `\\SRV-APPS\Deploy\Autorizacoes\`)
