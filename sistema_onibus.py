@@ -584,12 +584,29 @@ def ativar_diagnostico_travamento(root) -> None:
 
     batimento()
 
+    # Registra as ações do usuário (sem o conteúdo digitado) para saber qual foi a
+    # última coisa feita antes de travar.
+    def registrar(descricao):
+        def _registrar(evento):
+            log.write(f"{datetime.now():%H:%M:%S.%f}"[:-3] + f"  {descricao}  em {evento.widget}\n")
+        return _registrar
+
+    for sequencia, descricao in (
+        ("<ButtonPress>", "clique do mouse"),
+        ("<MouseWheel>", "rolagem do mouse"),
+        ("<FocusIn>", "campo recebeu foco"),
+        ("<KeyPress>", "tecla pressionada"),
+    ):
+        root.bind_all(sequencia, registrar(descricao), add="+")
+    root.bind("<Map>", registrar("janela exibida"), add="+")
+    root.bind("<Unmap>", registrar("janela minimizada"), add="+")
+
 
 if __name__ == "__main__":
     if not os.path.exists(CAMINHO_BRASAO):
         print(f"Aviso: brasao_guarapari.png não encontrado em {PASTA_SCRIPT}. "
               f"O documento será gerado sem o brasão no cabeçalho.", file=sys.stderr)
     root = tk.Tk()
-    ativar_diagnostico_travamento(root)
     app = AppTurismo(root)
+    ativar_diagnostico_travamento(root)
     root.mainloop()
