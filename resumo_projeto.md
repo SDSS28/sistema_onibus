@@ -22,8 +22,8 @@ Lei 5.111/2025 e no Decreto nº 654/2025. Gera um PDF com:
   provisório (`PROV-NNNN/AAAA`), para não colidir com a sequência oficial
 
 ## Stack
-Python 3.12 (não usar 3.14 — Tcl/Tk 9.0 do instalador oficial trava a interface
-no Windows). Bibliotecas: `tkinter`, `reportlab` (usando Platypus/Table, não
+Python 3.12 ou 3.14 (ambos testados). O travamento antes atribuído ao Python 3.14
+/ Tcl/Tk 9.0 era, na verdade, do computador de desenvolvimento (ver abaixo). Bibliotecas: `tkinter`, `reportlab` (usando Platypus/Table, não
 canvas puro), `qrcode`, `pypdf`, `Pillow`.
 
 ## Arquivos do projeto
@@ -55,13 +55,18 @@ Saída em `dist\EmissorAutorizacaoOnibus.exe` — único arquivo a distribuir.
 - Servidor adicionado à zona "Intranet Local" via GPO para evitar aviso de
   segurança do Windows ao executar .exe de rede
 
-## Problema em aberto agora
-O sistema voltou a travar. Hipótese mais provável: `CAMINHO_ARMAZENAMENTO`
-ainda é um placeholder que não resolve na rede, e a chamada `os.makedirs()`
-nesse caminho UNC trava a thread principal da interface por dezenas de
-segundos enquanto o Windows tenta resolver o nome do servidor (não é o mesmo
-bug de Tcl/Tk do Python 3.14 resolvido anteriormente). Teste trocando para um
-caminho local temporário para confirmar.
+## Travamento da interface (investigado)
+A janela congelava sozinha, sem interação, poucos segundos após abrir. Diagnóstico
+com faulthandler mostrou o programa parado dentro do `mainloop` do Tk, sem nenhuma
+linha do sistema em execução. Resultados:
+- Computador de desenvolvimento (Windows 11 build 26200): trava com Python 3.12/Tk 8.6,
+  3.14/Tk 9.0, com o `.exe` e até com `python -m tkinter` (sem código do sistema).
+- VM Windows Server 2025 e outro PC com Windows 11: funciona normalmente.
+Conclusão: problema do ambiente daquele computador (provável programa/recurso do
+Windows interferindo), não do sistema.
+
+Obs.: ao transferir o `.exe`, compactar em .zip (ou usar pendrive). Um `.exe`
+corrompido na cópia gera o erro do PyInstaller "Error -3 while decompressing data".
 
 ## Adiado para depois
 QR Code apontando para uma URL que abra o documento (hoje só guarda dados de
