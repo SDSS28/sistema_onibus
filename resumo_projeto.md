@@ -13,8 +13,13 @@ Lei 5.111/2025 e no Decreto nº 654/2025. Gera um PDF com:
   usuários simultâneos
 - Mescla o PDF gerado com o comprovante de pagamento (PDF ou imagem) anexado
   pelo usuário, formando um documento único de duas páginas
-- Salva o resultado em pasta centralizada de rede, organizada por ano/mês, com
-  fallback para a Área de Trabalho local se o servidor estiver indisponível
+- Salva o resultado em DOIS locais: pasta centralizada de rede (organizada por
+  ano/mês) E Área de Trabalho do computador que executa o sistema. Se um dos
+  dois falhar, o documento é salvo no outro e aparece um único aviso dizendo
+  qual local falhou. Só dá erro se nenhum dos dois funcionar.
+- Se o servidor estiver inacessível na hora de numerar, usa um contador local
+  (`%LOCALAPPDATA%\EmissorAutorizacao\_controle`) e o número sai marcado como
+  provisório (`PROV-NNNN/AAAA`), para não colidir com a sequência oficial
 
 ## Stack
 Python 3.12 (não usar 3.14 — Tcl/Tk 9.0 do instalador oficial trava a interface

@@ -1,3 +1,4 @@
+import io
 import os
 import re
 import sys
@@ -73,11 +74,38 @@ def validar_inteiro_positivo(valor_str: str) -> bool:
     return valor_str.strip().isdigit() and int(valor_str) > 0
 
 
-def obter_proximo_numero() -> str:
+def obter_pasta_area_de_trabalho() -> str:
+    """Retorna a Área de Trabalho real do usuário. No Windows consulta o sistema,
+    pois ela pode estar redirecionada (OneDrive, GPO) e não ser ~\\Desktop."""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            from ctypes import wintypes
+            CSIDL_DESKTOPDIRECTORY = 0x0010
+            buffer = ctypes.create_unicode_buffer(wintypes.MAX_PATH)
+            if ctypes.windll.shell32.SHGetFolderPathW(None, CSIDL_DESKTOPDIRECTORY, None, 0, buffer) == 0:
+                return buffer.value
+        except Exception:
+            pass
+    return os.path.join(os.path.expanduser("~"), "Desktop")
+
+
+def obter_proximo_numero() -> tuple[str, bool]:
+    """Retorna (numero, provisorio). Usa a numeração oficial do servidor; se o
+    servidor estiver inacessível, usa um contador local e marca o número como
+    provisório (prefixo PROV-) para não colidir com a sequência oficial."""
+    try:
+        return _proximo_numero_em(os.path.join(CAMINHO_ARMAZENAMENTO, "_controle")), False
+    except OSError:
+        base_local = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+        pasta_local = os.path.join(base_local, "EmissorAutorizacao", "_controle")
+        return f"PROV-{_proximo_numero_em(pasta_local)}", True
+
+
+def _proximo_numero_em(pasta_controle: str) -> str:
     """Gera o próximo número sequencial (NNNN/AAAA), reiniciando a cada ano.
-    Usa um arquivo de controle + lock no servidor central para evitar números
-    duplicados quando duas pessoas geram documentos ao mesmo tempo."""
-    pasta_controle = os.path.join(CAMINHO_ARMAZENAMENTO, "_controle")
+    Usa um arquivo de controle + lock para evitar números duplicados quando
+    duas pessoas geram documentos ao mesmo tempo."""
     os.makedirs(pasta_controle, exist_ok=True)
     caminho_contador = os.path.join(pasta_controle, "contador.txt")
     caminho_lock = os.path.join(pasta_controle, "contador.lock")
@@ -435,7 +463,7 @@ class AppTurismo:
 
         arquivos_temp = []
         try:
-            dados["numero"] = obter_proximo_numero()
+            dados["numero"], numero_provisorio = obter_proximo_numero()
 
             tmp_dir = tempfile.gettempdir()
             sufixo = uuid.uuid4().hex[:8]
@@ -468,33 +496,51 @@ class AppTurismo:
             for pagina in PdfReader(comprovante_pdf_pronto).pages:
                 escritor.add_page(pagina)
 
-            agora = datetime.now()
-            pasta_destino = os.path.join(CAMINHO_ARMAZENAMENTO, f"{agora.year:04d}", f"{agora.month:02d}")
-            usando_fallback = False
-
-            try:
-                os.makedirs(pasta_destino, exist_ok=True)
-            except OSError:
-                # Servidor indisponível: cai para a Área de Trabalho local, mas avisa claramente o usuário
-                usando_fallback = True
-                pasta_destino = os.path.join(os.path.expanduser("~"), "Desktop")
+            buffer_pdf = io.BytesIO()
+            escritor.write(buffer_pdf)
+            conteudo_pdf = buffer_pdf.getvalue()
 
             numero_arquivo = dados["numero"].replace("/", "-").replace("\\", "-")
-            nome_base = f"Autorizacao_Turismo_{numero_arquivo}_{dados['placa'].replace('-', '_')}_{sufixo}"
-            arquivo_final = os.path.join(pasta_destino, f"{nome_base}.pdf")
+            nome_arquivo = f"Autorizacao_Turismo_{numero_arquivo}_{dados['placa'].replace('-', '_')}_{sufixo}.pdf"
 
-            with open(arquivo_final, "wb") as saida:
-                escritor.write(saida)
+            # O documento é salvo nos dois locais; a falha em um deles não impede o outro.
+            agora = datetime.now()
+            destinos = [
+                ("Servidor", os.path.join(CAMINHO_ARMAZENAMENTO, f"{agora.year:04d}", f"{agora.month:02d}")),
+                ("Área de Trabalho", obter_pasta_area_de_trabalho()),
+            ]
+            salvos, falhas = [], []
+            for nome_local, pasta in destinos:
+                caminho = os.path.join(pasta, nome_arquivo)
+                try:
+                    os.makedirs(pasta, exist_ok=True)
+                    with open(caminho, "wb") as saida:
+                        saida.write(conteudo_pdf)
+                    salvos.append((nome_local, caminho))
+                except OSError as erro:
+                    falhas.append((nome_local, pasta, erro))
 
-            if usando_fallback:
+            if not salvos:
+                detalhes = "\n".join(f"- {nome} ({pasta}): {erro}" for nome, pasta, erro in falhas)
+                raise RuntimeError(f"O documento não pôde ser salvo em nenhum local:\n{detalhes}")
+
+            texto_salvos = "\n\n".join(f"{nome}:\n{caminho}" for nome, caminho in salvos)
+            aviso_numero = (
+                "\n\nComo o servidor estava inacessível, o documento recebeu uma numeração "
+                f"PROVISÓRIA ({dados['numero']})."
+                if numero_provisorio else ""
+            )
+
+            if falhas:
+                nome_falha, pasta_falha, erro_falha = falhas[0]
                 messagebox.showwarning(
-                    "Servidor indisponível!",
-                    f"Não foi possível acessar o armazenamento central ({CAMINHO_ARMAZENAMENTO}).\n\n"
-                    f"O documento foi salvo temporariamente na sua Área de Trabalho:\n{arquivo_final}\n\n"
-                    "Avise o setor de TI e copie este arquivo para o servidor manualmente quando possível."
+                    f"Não foi possível salvar em: {nome_falha}",
+                    f"O documento foi gerado, mas NÃO foi possível salvá-lo em: {nome_falha}\n"
+                    f"({pasta_falha})\nMotivo: {erro_falha}\n\n"
+                    f"Salvo com sucesso em:\n{texto_salvos}{aviso_numero}"
                 )
             else:
-                messagebox.showinfo("Sucesso!", f"Documento gerado com sucesso:\n\n{arquivo_final}")
+                messagebox.showinfo("Sucesso!", f"Documento gerado e salvo em:\n\n{texto_salvos}{aviso_numero}")
 
         except Exception as e:
             messagebox.showerror("Erro Crítico", f"Ocorreu um erro ao gerar o documento:\n{str(e)}")
