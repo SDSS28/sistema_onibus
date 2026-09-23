@@ -7,7 +7,13 @@ Lei 5.111/2025 e no Decreto nº 654/2025. Gera um PDF com:
 - Cabeçalho com o brasão municipal
 - Texto legal fixo (considerando, autorização, advertências) extraído do modelo oficial
 - Tabelas com dados da excursão, do transporte e do período autorizado
-- QR Code + hash de autenticidade (hash fixada no rodapé/margem inferior da página)
+- Página 2 "Senha de Acesso — Identificação de Para-brisa": placa em destaque,
+  entrada, saída, Zona (ZAC) e QR Code grande, para ficar no para-brisa
+- QR Code (na página 2) + hash de autenticidade no rodapé de todas as páginas
+- Destino final com a Zona de Acesso Controlado (ZAC: Verde, Amarela ou Vermelha).
+  A zona sai no PDF e no QR Code, e os horários de entrada/saída são validados
+  contra as janelas da zona (Art. 17). Tabelas em `DESTINOS_ZAC` e `JANELAS_ZAC`
+- Calendário (tkcalendar, em português) para as datas e seletores de hora/minuto
 - Numeração sequencial automática (NNNN/AAAA, reinicia por ano), com trava
   (lock) em arquivo de controle no servidor para evitar duplicidade entre
   usuários simultâneos
@@ -24,7 +30,10 @@ Lei 5.111/2025 e no Decreto nº 654/2025. Gera um PDF com:
 ## Stack
 Python 3.12 ou 3.14 (ambos testados). O travamento antes atribuído ao Python 3.14
 / Tcl/Tk 9.0 era, na verdade, do computador de desenvolvimento (ver abaixo). Bibliotecas: `tkinter`, `reportlab` (usando Platypus/Table, não
-canvas puro), `qrcode`, `pypdf`, `Pillow`.
+canvas puro), `qrcode`, `pypdf`, `Pillow`, `tkcalendar`.
+```
+py -m pip install reportlab qrcode pypdf pillow tkcalendar
+```
 
 ## Arquivos do projeto
 - `sistema_onibus.py` — script principal
@@ -43,9 +52,10 @@ canvas puro), `qrcode`, `pypdf`, `Pillow`.
 
 ## Empacotamento (.exe)
 ```
-python -m pip install pyinstaller
-python -m PyInstaller --onefile --windowed --name "EmissorAutorizacaoOnibus" ^
-    --icon="brasao_guarapari.ico" --add-data "brasao_guarapari.png;." sistema_onibus.py
+py -m pip install pyinstaller
+py -m PyInstaller --onefile --windowed --name "EmissorAutorizacaoOnibus" ^
+    --icon="brasao_guarapari.ico" --add-data "brasao_guarapari.png;." ^
+    --hidden-import babel.numbers sistema_onibus.py
 ```
 Saída em `dist\EmissorAutorizacaoOnibus.exe` — único arquivo a distribuir.
 Gerar dentro da pasta do usuário (ex.: `%USERPROFILE%\Emissor`) para evitar

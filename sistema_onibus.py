@@ -5,22 +5,25 @@ import sys
 import time
 import uuid
 import tempfile
-from datetime import datetime
+from datetime import datetime, time as dt_time
 
 import qrcode
 import tkinter as tk
-from tkinter import filedialog, messagebox
+from tkinter import filedialog, messagebox, ttk
+from tkcalendar import DateEntry
 from reportlab.lib.pagesizes import letter
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
+    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage, PageBreak,
+    KeepTogether
 )
 from pypdf import PdfWriter, PdfReader
 from PIL import Image as PILImage
 
 PADRAO_DATA = "%d/%m/%Y"
+PADRAO_DATA_HORA = "%d/%m/%Y %H:%M"
 PADRAO_PLACA = re.compile(r"^[A-Z]{3}-?\d[A-Z0-9]\d{2}$")  # aceita padrão antigo e Mercosul
 
 # O brasão precisa estar na mesma pasta deste script (ou embutido no .exe via --add-data).
@@ -57,6 +60,40 @@ TEXTO_ADVERTENCIA_2 = (
     "como a aplicação das sanções administrativas cabíveis."
 )
 
+# Zona de Acesso Controlado (ZAC) de cada destino e os horários em que cada zona permite circulação (Art. 17).
+DESTINOS_ZAC = {
+    "Centro de Guarapari": "Amarela",
+    "Praia do Morro": "Amarela",
+    "Meaípe / Nova Guarapari": "Amarela",
+    "SESC / Hotel Guarapousada": "Amarela",
+    "Pousadas e casas de excursão (vias amarelas)": "Amarela",
+    "Interior (Buenos Aires, Todos os Santos, Rio Calado)": "Verde",
+    "Village do Sol / Palmeiras / Recanto da Sereia": "Verde",
+    "Santa Mônica (rotas autorizadas)": "Verde",
+    "Rodoviária Municipal / Estacionamento Oficial": "Verde",
+    "Zona Vermelha (acesso excepcional)": "Vermelha",
+}
+
+JANELAS_ZAC = {
+    "Vermelha": [(dt_time(5, 0), dt_time(8, 0))],
+    "Amarela": [(dt_time(5, 0), dt_time(8, 0)), (dt_time(12, 0), dt_time(14, 0))],
+    "Verde": [(dt_time(0, 0), dt_time(23, 59))],
+}
+
+# Texto exibido e horários sugeridos (entrada, saída) ao escolher cada zona na tela.
+DESCRICAO_JANELA_ZAC = {
+    "Vermelha": ("somente 05h–08h", "06", "07"),
+    "Amarela": ("05h–08h e 12h–14h", "07", "13"),
+    "Verde": ("qualquer horário (estacionamento oficial obrigatório)", None, None),
+}
+
+# Textos da página 2 (senha de acesso para o para-brisa).
+TEXTO_SENHA_ARTIGOS = "(Art. 13, parágrafo único, e art. 24, II — Decreto nº 654/2025)"
+TEXTO_SENHA_PROIBICAO = (
+    "PROIBIDO TRANSPORTE DE ALIMENTOS, FOGÕES, BOTIJÕES DE GÁS, GELADEIRAS/FREEZERS E ITENS INFLAMÁVEIS "
+    "(Art. 25 do Decreto nº 654/2025) — SUJEITO A RETENÇÃO E REMOÇÃO AO DEPÓSITO MUNICIPAL"
+)
+
 
 def validar_placa(placa: str) -> bool:
     return bool(PADRAO_PLACA.match(placa.upper().replace(" ", "")))
@@ -68,6 +105,18 @@ def validar_data(data_str: str) -> bool:
         return True
     except ValueError:
         return False
+
+
+def validar_data_hora(data_hora_str: str) -> bool:
+    try:
+        datetime.strptime(data_hora_str, PADRAO_DATA_HORA)
+        return True
+    except ValueError:
+        return False
+
+
+def horario_permitido_zac(hora: dt_time, zona: str) -> bool:
+    return any(inicio <= hora <= fim for inicio, fim in JANELAS_ZAC.get(zona, JANELAS_ZAC["Verde"]))
 
 
 def validar_inteiro_positivo(valor_str: str) -> bool:
@@ -200,22 +249,22 @@ def criar_autorizacao(dados: dict, hash_seguranca: str, caminho_qr: str, arquivo
         img_brasao = RLImage(CAMINHO_BRASAO, width=55, height=62)
         img_brasao.hAlign = "CENTER"
         elementos.append(img_brasao)
-        elementos.append(Spacer(1, 8))
+        elementos.append(Spacer(1, 4))
 
     elementos.append(Paragraph("ESTADO DO ESPÍRITO SANTO", estilo_centro_bold))
     elementos.append(Paragraph("PREFEITURA MUNICIPAL DE GUARAPARI", estilo_centro_bold))
     elementos.append(Paragraph("SECRETARIA MUNICIPAL DE SEGURANÇA, TRÂNSITO E TRANSPORTE – SEMSET", estilo_centro_bold))
-    elementos.append(Spacer(1, 10))
+    elementos.append(Spacer(1, 6))
 
     elementos.append(Paragraph(f"AUTORIZAÇÃO DE ENTRADA DE VEÍCULO DE TURISMO Nº {dados['numero']}", estilo_titulo_doc))
-    elementos.append(Spacer(1, 10))
+    elementos.append(Spacer(1, 6))
 
     elementos.append(Paragraph(TEXTO_CONSIDERANDO, estilo_justificado))
     elementos.append(Spacer(1, 8))
     elementos.append(Paragraph("AUTORIZA", estilo_autoriza))
     elementos.append(Spacer(1, 8))
     elementos.append(Paragraph(TEXTO_INTRO, estilo_justificado))
-    elementos.append(Spacer(1, 14))
+    elementos.append(Spacer(1, 8))
 
     elementos.append(_tabela_secao(
         "Identificação da Excursão",
@@ -228,7 +277,7 @@ def criar_autorizacao(dados: dict, hash_seguranca: str, caminho_qr: str, arquivo
         ],
         estilo_secao, estilo_label, estilo_valor
     ))
-    elementos.append(Spacer(1, 8))
+    elementos.append(Spacer(1, 5))
 
     elementos.append(_tabela_secao(
         "Dados do Transporte",
@@ -239,9 +288,10 @@ def criar_autorizacao(dados: dict, hash_seguranca: str, caminho_qr: str, arquivo
         ],
         estilo_secao, estilo_label, estilo_valor
     ))
-    elementos.append(Spacer(1, 8))
+    elementos.append(Spacer(1, 5))
 
     linhas_periodo = [
+        ("Destino / Zona (ZAC)", f"{dados['destino']} — Zona {dados['zona_zac']}"),
         ("Entrada – Data/Hora", dados["entrada"]),
         ("Saída – Data/Hora", dados["saida"]),
         ("Quantidade de Passageiros", dados["passageiros"]),
@@ -252,22 +302,53 @@ def criar_autorizacao(dados: dict, hash_seguranca: str, caminho_qr: str, arquivo
         linhas_periodo.append(("CADASTUR – Imóvel", dados["cadastur_imovel"]))
 
     elementos.append(_tabela_secao("Período Autorizado", linhas_periodo, estilo_secao, estilo_label, estilo_valor))
-    elementos.append(Spacer(1, 16))
+    elementos.append(Spacer(1, 10))
 
     elementos.append(Paragraph(TEXTO_ADVERTENCIA_1, estilo_rodape))
     elementos.append(Spacer(1, 4))
     elementos.append(Paragraph(TEXTO_ADVERTENCIA_2, estilo_rodape))
-    elementos.append(Spacer(1, 20))
+    elementos.append(Spacer(1, 14))
 
-    elementos.append(Paragraph(NOME_ASSINANTE, estilo_assinatura))
-    elementos.append(Paragraph(CARGO_ASSINANTE, estilo_cargo))
-    elementos.append(Spacer(1, 16))
+    # Nome e cargo do assinante nunca se separam em páginas diferentes.
+    elementos.append(KeepTogether([
+        Paragraph(NOME_ASSINANTE, estilo_assinatura),
+        Paragraph(CARGO_ASSINANTE, estilo_cargo),
+    ]))
 
-    img_qr = RLImage(caminho_qr, width=85, height=85)
-    img_qr.hAlign = "CENTER"
-    elementos.append(img_qr)
+    # ================= PÁGINA 2: senha de acesso para o para-brisa =================
+    estilo_senha_titulo = ParagraphStyle("senha_titulo", parent=estilo_centro_bold, fontSize=14, leading=16)
+    estilo_senha_destaque = ParagraphStyle("senha_destaque", parent=estilo_centro_bold, fontSize=14, leading=18)
+    estilo_senha_placa = ParagraphStyle("senha_placa", parent=estilo_centro_bold, fontSize=44, leading=50)
+    estilo_senha_info = ParagraphStyle("senha_info", parent=estilo_centro_bold, fontSize=16, leading=20)
+    estilo_senha_artigos = ParagraphStyle("senha_artigos", parent=estilo_centro, fontSize=9, leading=10)
+    estilo_senha_alerta = ParagraphStyle("senha_alerta", parent=estilo_justificado, fontSize=7, leading=8.5)
+
+    elementos.append(PageBreak())
+    elementos.append(Spacer(1, 8))
+    elementos.append(Paragraph("SENHA DE ACESSO — IDENTIFICAÇÃO DE PARA-BRISA", estilo_senha_titulo))
+    elementos.append(Spacer(1, 4))
+    elementos.append(Paragraph("PROJETO RUAS LIVRES - GUARAPARI/ES", estilo_senha_destaque))
+    elementos.append(Spacer(1, 12))
+    elementos.append(Paragraph(f"PLACA: {dados['placa']}", estilo_senha_placa))
+    elementos.append(Spacer(1, 10))
+    elementos.append(Paragraph(f"ENTRADA: {dados['entrada']}", estilo_senha_info))
+    elementos.append(Spacer(1, 6))
+    elementos.append(Paragraph(f"SAÍDA: {dados['saida']}", estilo_senha_info))
+    elementos.append(Spacer(1, 6))
+    elementos.append(Paragraph(f"ZAC: ZONA {dados['zona_zac'].upper()}", estilo_senha_info))
+    elementos.append(Spacer(1, 12))
+
+    img_qr_grande = RLImage(caminho_qr, width=160, height=160)
+    img_qr_grande.hAlign = "CENTER"
+    elementos.append(img_qr_grande)
     elementos.append(Spacer(1, 4))
     elementos.append(Paragraph("Escaneie para validar", estilo_hash))
+    elementos.append(Spacer(1, 8))
+
+    elementos.append(Paragraph("USO OBRIGATÓRIO E VISÍVEL NO PARA-BRISA", estilo_senha_destaque))
+    elementos.append(Paragraph(TEXTO_SENHA_ARTIGOS, estilo_senha_artigos))
+    elementos.append(Spacer(1, 6))
+    elementos.append(Paragraph(TEXTO_SENHA_PROIBICAO, estilo_senha_alerta))
 
     def _rodape(canvas_obj, doc_obj):
         # Hash fixada na margem inferior da página, independente do tamanho do conteúdo acima.
@@ -307,7 +388,7 @@ class AppTurismo:
     def __init__(self, root):
         self.root = root
         self.root.title("Emissor de Autorização - Entrada de Veículo de Turismo")
-        self.root.geometry("620x760")
+        self.root.geometry("680x780")
 
         self.comprovante_path = ""
 
@@ -354,14 +435,26 @@ class AppTurismo:
         self.entry_placa = self._linha_grid(secao_transporte, 1, "Placa:")
         self.entry_empresa_transporte = self._linha_grid(secao_transporte, 2, "Empresa de Transporte:")
 
-        # --- Período Autorizado ---
-        secao_periodo = tk.LabelFrame(self.frame, text="Período Autorizado", font=("Helvetica", 10, "bold"), padx=10, pady=10)
+        # --- Período Autorizado e Zona ---
+        secao_periodo = tk.LabelFrame(self.frame, text="Período Autorizado e Zona", font=("Helvetica", 10, "bold"), padx=10, pady=10)
         secao_periodo.pack(fill="x", padx=20, pady=8)
-        self.entry_entrada = self._linha_grid(secao_periodo, 0, "Entrada (Data/Hora):")
-        self.entry_saida = self._linha_grid(secao_periodo, 1, "Saída (Data/Hora):")
-        self.entry_passageiros = self._linha_grid(secao_periodo, 2, "Quantidade de Passageiros:")
-        self.entry_cadastur_veiculo = self._linha_grid(secao_periodo, 3, "CADASTUR – Veículo (opcional):")
-        self.entry_cadastur_imovel = self._linha_grid(secao_periodo, 4, "CADASTUR – Imóvel (opcional):")
+
+        tk.Label(secao_periodo, text="Destino final:", anchor="w").grid(row=0, column=0, sticky="w", pady=4, padx=(0, 8))
+        self.var_destino = tk.StringVar(value="Rodoviária Municipal / Estacionamento Oficial")
+        self.combo_destino = ttk.Combobox(
+            secao_periodo, textvariable=self.var_destino, width=38, state="readonly", values=list(DESTINOS_ZAC.keys())
+        )
+        self.combo_destino.grid(row=0, column=1, sticky="w", pady=4)
+        self.combo_destino.bind("<<ComboboxSelected>>", lambda e: self._atualizar_zona(sugerir_horarios=True))
+        self.lbl_zac = tk.Label(secao_periodo, text="", fg="#1a5276", font=("Helvetica", 8, "bold"))
+        self.lbl_zac.grid(row=1, column=0, columnspan=2, sticky="w")
+
+        self.cal_entrada, self.hora_entrada, self.min_entrada = self._linha_data_hora(secao_periodo, 2, "Entrada (Data/Hora):", "08")
+        self.cal_saida, self.hora_saida, self.min_saida = self._linha_data_hora(secao_periodo, 3, "Saída (Data/Hora):", "18")
+        self.entry_passageiros = self._linha_grid(secao_periodo, 4, "Quantidade de Passageiros:")
+        self.entry_cadastur_veiculo = self._linha_grid(secao_periodo, 5, "CADASTUR – Veículo (opcional):")
+        self.entry_cadastur_imovel = self._linha_grid(secao_periodo, 6, "CADASTUR – Imóvel (opcional):")
+        self._atualizar_zona(sugerir_horarios=False)
 
         # --- Controle interno (não impresso no documento) ---
         secao_interna = tk.LabelFrame(
@@ -369,8 +462,8 @@ class AppTurismo:
             font=("Helvetica", 9, "bold"), padx=10, pady=10, fg="#555555"
         )
         secao_interna.pack(fill="x", padx=20, pady=8)
-        self.entry_pagamento = self._linha_grid(secao_interna, 0, "Data de Pagamento (DD/MM/AAAA):")
-        self.entry_validade = self._linha_grid(secao_interna, 1, "Data de Validade (DD/MM/AAAA):")
+        self.cal_pagamento = self._linha_data(secao_interna, 0, "Data de Pagamento:")
+        self.cal_validade = self._linha_data(secao_interna, 1, "Data de Validade:")
 
         self.btn_comprovante = tk.Button(
             self.frame, text="Selecionar Comprovante (PDF/Imagem)",
@@ -401,6 +494,52 @@ class AppTurismo:
         entrada.grid(row=linha, column=1, sticky="w", pady=4)
         return entrada
 
+    @staticmethod
+    def _calendario(pai):
+        cal = DateEntry(
+            pai, width=12, background="darkblue", foreground="white", borderwidth=2,
+            date_pattern="dd/mm/yyyy", locale="pt_BR"
+        )
+        cal.set_date(datetime.now().date())
+        return cal
+
+    def _linha_data(self, pai, linha, texto_label):
+        tk.Label(pai, text=texto_label, anchor="w").grid(row=linha, column=0, sticky="w", pady=4, padx=(0, 8))
+        cal = self._calendario(pai)
+        cal.grid(row=linha, column=1, sticky="w", pady=4)
+        return cal
+
+    def _linha_data_hora(self, pai, linha, texto_label, hora_padrao):
+        tk.Label(pai, text=texto_label, anchor="w").grid(row=linha, column=0, sticky="w", pady=4, padx=(0, 8))
+        frame = tk.Frame(pai)
+        frame.grid(row=linha, column=1, sticky="w", pady=4)
+
+        cal = self._calendario(frame)
+        cal.pack(side="left", padx=(0, 10))
+
+        tk.Label(frame, text="H:").pack(side="left")
+        hora = ttk.Spinbox(frame, from_=0, to=23, width=3, format="%02.0f", wrap=True)
+        hora.set(hora_padrao)
+        hora.pack(side="left", padx=(0, 5))
+
+        tk.Label(frame, text="M:").pack(side="left")
+        minuto = ttk.Spinbox(frame, from_=0, to=59, width=3, format="%02.0f", wrap=True)
+        minuto.set("00")
+        minuto.pack(side="left")
+        return cal, hora, minuto
+
+    def _zona_atual(self):
+        return DESTINOS_ZAC.get(self.var_destino.get(), "Verde")
+
+    def _atualizar_zona(self, sugerir_horarios):
+        zona = self._zona_atual()
+        janela, hora_entrada, hora_saida = DESCRICAO_JANELA_ZAC[zona]
+        self.lbl_zac.config(text=f"Zona {zona}: circulação permitida {janela} (Art. 17).")
+        # Só sugere horários quando o usuário troca o destino, para não sobrescrever o que ele já escolheu.
+        if sugerir_horarios and hora_entrada:
+            self.hora_entrada.set(hora_entrada)
+            self.hora_saida.set(hora_saida)
+
     def selecionar_comprovante(self):
         # Diálogo nativo: precisa rodar na thread principal, junto do mainloop.
         arquivo = filedialog.askopenfilename(
@@ -421,17 +560,19 @@ class AppTurismo:
             "tipo_veiculo": self.var_tipo_veiculo.get(),
             "placa": self.entry_placa.get().strip().upper(),
             "empresa_transporte": self.entry_empresa_transporte.get().strip(),
-            "entrada": self.entry_entrada.get().strip(),
-            "saida": self.entry_saida.get().strip(),
+            "entrada": f"{self.cal_entrada.get().strip()} {self.hora_entrada.get().strip().zfill(2)}:{self.min_entrada.get().strip().zfill(2)}",
+            "saida": f"{self.cal_saida.get().strip()} {self.hora_saida.get().strip().zfill(2)}:{self.min_saida.get().strip().zfill(2)}",
             "passageiros": self.entry_passageiros.get().strip(),
             "cadastur_veiculo": self.entry_cadastur_veiculo.get().strip(),
             "cadastur_imovel": self.entry_cadastur_imovel.get().strip(),
+            "destino": self.var_destino.get(),
+            "zona_zac": self._zona_atual(),
         }
 
     def processar(self):
         dados = self._coletar_dados()
-        pagamento = self.entry_pagamento.get().strip()
-        validade = self.entry_validade.get().strip()
+        pagamento = self.cal_pagamento.get().strip()
+        validade = self.cal_validade.get().strip()
 
         campos_obrigatorios = [
             dados["empresa_responsavel"], dados["cnpj_cpf"], dados["responsavel_legal"],
@@ -444,6 +585,25 @@ class AppTurismo:
 
         if not validar_placa(dados["placa"]):
             messagebox.showerror("Erro", "Placa inválida. Use o formato ABC-1234 ou ABC1D23.")
+            return
+
+        if not validar_data_hora(dados["entrada"]) or not validar_data_hora(dados["saida"]):
+            messagebox.showerror("Erro", "Data/hora de entrada ou saída inválida. Confira a data e se a hora vai de 00 a 23 e os minutos de 00 a 59.")
+            return
+
+        dt_entrada = datetime.strptime(dados["entrada"], PADRAO_DATA_HORA)
+        dt_saida = datetime.strptime(dados["saida"], PADRAO_DATA_HORA)
+        if dt_saida <= dt_entrada:
+            messagebox.showerror("Erro", "A saída deve ser posterior à entrada.")
+            return
+
+        zona = dados["zona_zac"]
+        if not horario_permitido_zac(dt_entrada.time(), zona) or not horario_permitido_zac(dt_saida.time(), zona):
+            messagebox.showerror(
+                "Erro",
+                f"Horário fora do permitido para a Zona {zona}: {DESCRICAO_JANELA_ZAC[zona][0]} (Art. 17).\n"
+                "Ajuste a hora de entrada e/ou de saída."
+            )
             return
 
         if not validar_inteiro_positivo(dados["passageiros"]):
@@ -471,7 +631,7 @@ class AppTurismo:
             hash_unica = str(uuid.uuid4()).upper()
             conteudo_qr = (
                 f"AUTORIZACAO|NUMERO:{dados['numero']}|PLACA:{dados['placa']}|"
-                f"ENTRADA:{dados['entrada']}|SAIDA:{dados['saida']}|HASH:{hash_unica}"
+                f"ENTRADA:{dados['entrada']}|SAIDA:{dados['saida']}|ZAC:{dados['zona_zac']}|HASH:{hash_unica}"
             )
 
             caminho_qr = os.path.join(tmp_dir, f"qr_{sufixo}.png")
