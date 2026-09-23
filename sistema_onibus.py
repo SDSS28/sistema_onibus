@@ -555,10 +555,41 @@ class AppTurismo:
             self.btn_gerar.config(state="normal", text="Gerar Documento Final")
 
 
+SEGUNDOS_PARA_CONSIDERAR_TRAVADO = 8
+
+
+def ativar_diagnostico_travamento(root) -> None:
+    """DIAGNÓSTICO TEMPORÁRIO: se a interface ficar parada por mais de alguns
+    segundos, grava em diagnostico_emissor.txt (na Área de Trabalho) a linha exata
+    do código onde o programa está preso. Remover depois de resolver o travamento."""
+    import faulthandler
+    import platform
+    try:
+        caminho_log = os.path.join(obter_pasta_area_de_trabalho(), "diagnostico_emissor.txt")
+        log = open(caminho_log, "a", encoding="utf-8", buffering=1)
+    except OSError:
+        return
+    log.write(
+        f"\n===== Início: {datetime.now():%d/%m/%Y %H:%M:%S} | Python {platform.python_version()} "
+        f"| Tcl/Tk {root.tk.call('info', 'patchlevel')} | {platform.platform()} "
+        f"| executável: {sys.executable}\n"
+    )
+    root._log_diagnostico = log  # mantém o arquivo aberto enquanto o programa roda
+
+    def batimento():
+        # Enquanto a interface responde, o prazo é renovado e nada é gravado.
+        # Se ela travar, o prazo estoura e o faulthandler grava onde o código está parado.
+        faulthandler.dump_traceback_later(SEGUNDOS_PARA_CONSIDERAR_TRAVADO, repeat=True, file=log)
+        root.after(1000, batimento)
+
+    batimento()
+
+
 if __name__ == "__main__":
     if not os.path.exists(CAMINHO_BRASAO):
         print(f"Aviso: brasao_guarapari.png não encontrado em {PASTA_SCRIPT}. "
               f"O documento será gerado sem o brasão no cabeçalho.", file=sys.stderr)
     root = tk.Tk()
+    ativar_diagnostico_travamento(root)
     app = AppTurismo(root)
     root.mainloop()
