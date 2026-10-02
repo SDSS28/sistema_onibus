@@ -68,6 +68,10 @@ _CONFIG = _ler_config()
 # Caminho UNC do servidor central de armazenamento. Configure em emissor_config.ini.
 CAMINHO_ARMAZENAMENTO = _config("armazenamento", "caminho", r"\\SRV-ARQ\Autorizacoes")
 
+# Subpasta onde ficam os PDFs (AAAA\MM), separada da _controle para que o acesso de quem só
+# confere documentos possa ser liberado apenas nela.
+PASTA_EMITIDAS = "Autorizações Emitidas"
+
 # Endereço da página de validação aberta pelo QR Code (publicada no site da prefeitura).
 URL_VALIDACAO = _config("validacao", "url", "https://www.guarapari.es.gov.br/validar-autorizacao/")
 
@@ -819,7 +823,7 @@ class AppTurismo:
 
             # O documento vai para o servidor. A Área de Trabalho só é usada se o servidor falhar.
             agora = datetime.now()
-            pasta_servidor = os.path.join(CAMINHO_ARMAZENAMENTO, f"{agora.year:04d}", f"{agora.month:02d}")
+            pasta_servidor = os.path.join(CAMINHO_ARMAZENAMENTO, PASTA_EMITIDAS, f"{agora.year:04d}", f"{agora.month:02d}")
             try:
                 caminho_final = _gravar_arquivo(pasta_servidor, nome_arquivo, conteudo_pdf)
             except OSError as erro_servidor:
