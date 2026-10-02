@@ -229,6 +229,14 @@ def _proximo_numero_em(pasta_controle: str) -> str:
             pass
 
 
+def _gravar_arquivo(pasta: str, nome_arquivo: str, conteudo: bytes) -> str:
+    os.makedirs(pasta, exist_ok=True)
+    caminho = os.path.join(pasta, nome_arquivo)
+    with open(caminho, "wb") as saida:
+        saida.write(conteudo)
+    return caminho
+
+
 def gerar_qr_code(dados: str, caminho_qr: str) -> None:
     qr = qrcode.QRCode(version=1, box_size=10, border=2)
     qr.add_data(dados)
@@ -702,44 +710,36 @@ class AppTurismo:
             numero_arquivo = dados["numero"].replace("/", "-").replace("\\", "-")
             nome_arquivo = f"Autorizacao_Turismo_{numero_arquivo}_{dados['placa'].replace('-', '_')}_{sufixo}.pdf"
 
-            # O documento é salvo nos dois locais; a falha em um deles não impede o outro.
-            agora = datetime.now()
-            destinos = [
-                ("Servidor", os.path.join(CAMINHO_ARMAZENAMENTO, f"{agora.year:04d}", f"{agora.month:02d}")),
-                ("Área de Trabalho", obter_pasta_area_de_trabalho()),
-            ]
-            salvos, falhas = [], []
-            for nome_local, pasta in destinos:
-                caminho = os.path.join(pasta, nome_arquivo)
-                try:
-                    os.makedirs(pasta, exist_ok=True)
-                    with open(caminho, "wb") as saida:
-                        saida.write(conteudo_pdf)
-                    salvos.append((nome_local, caminho))
-                except OSError as erro:
-                    falhas.append((nome_local, pasta, erro))
-
-            if not salvos:
-                detalhes = "\n".join(f"- {nome} ({pasta}): {erro}" for nome, pasta, erro in falhas)
-                raise RuntimeError(f"O documento não pôde ser salvo em nenhum local:\n{detalhes}")
-
-            texto_salvos = "\n\n".join(f"{nome}:\n{caminho}" for nome, caminho in salvos)
             aviso_numero = (
                 "\n\nComo o servidor estava inacessível, o documento recebeu uma numeração "
                 f"PROVISÓRIA ({dados['numero']})."
                 if numero_provisorio else ""
             )
 
-            if falhas:
-                nome_falha, pasta_falha, erro_falha = falhas[0]
+            # O documento vai para o servidor. A Área de Trabalho só é usada se o servidor falhar.
+            agora = datetime.now()
+            pasta_servidor = os.path.join(CAMINHO_ARMAZENAMENTO, f"{agora.year:04d}", f"{agora.month:02d}")
+            try:
+                caminho_final = _gravar_arquivo(pasta_servidor, nome_arquivo, conteudo_pdf)
+            except OSError as erro_servidor:
+                pasta_desktop = obter_pasta_area_de_trabalho()
+                try:
+                    caminho_final = _gravar_arquivo(pasta_desktop, nome_arquivo, conteudo_pdf)
+                except OSError as erro_desktop:
+                    raise RuntimeError(
+                        "O documento não pôde ser salvo em nenhum local:\n"
+                        f"- Servidor ({pasta_servidor}): {erro_servidor}\n"
+                        f"- Área de Trabalho ({pasta_desktop}): {erro_desktop}"
+                    )
                 messagebox.showwarning(
-                    f"Não foi possível salvar em: {nome_falha}",
-                    f"O documento foi gerado, mas NÃO foi possível salvá-lo em: {nome_falha}\n"
-                    f"({pasta_falha})\nMotivo: {erro_falha}\n\n"
-                    f"Salvo com sucesso em:\n{texto_salvos}{aviso_numero}"
+                    "Servidor indisponível",
+                    f"NÃO foi possível salvar o documento no servidor:\n({pasta_servidor})\n"
+                    f"Motivo: {erro_servidor}\n\n"
+                    f"Ele foi salvo na sua Área de Trabalho:\n{caminho_final}\n\n"
+                    f"Copie este arquivo para o servidor quando ele voltar a funcionar.{aviso_numero}"
                 )
             else:
-                messagebox.showinfo("Sucesso!", f"Documento gerado e salvo em:\n\n{texto_salvos}{aviso_numero}")
+                messagebox.showinfo("Sucesso!", f"Documento gerado e salvo no servidor:\n\n{caminho_final}{aviso_numero}")
 
         except Exception as e:
             messagebox.showerror("Erro Crítico", f"Ocorreu um erro ao gerar o documento:\n{str(e)}")
