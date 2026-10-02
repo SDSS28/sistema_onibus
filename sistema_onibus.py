@@ -1,3 +1,4 @@
+import configparser
 import io
 import os
 import re
@@ -30,8 +31,32 @@ PADRAO_PLACA = re.compile(r"^[A-Z]{3}-?\d[A-Z0-9]\d{2}$")  # aceita padrão anti
 PASTA_SCRIPT = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
 CAMINHO_BRASAO = os.path.join(PASTA_SCRIPT, "brasao_guarapari.png")
 
-# AJUSTE AQUI: caminho UNC do servidor central de armazenamento.
-CAMINHO_ARMAZENAMENTO = r"\\SRV-ARQ\Autorizacoes"
+# Pasta onde fica o .exe (ou este script). No .exe "onefile", o _MEIPASS acima é uma pasta
+# temporária; a configuração precisa ficar ao lado do próprio executável.
+PASTA_EXECUTAVEL = os.path.dirname(os.path.abspath(sys.executable if getattr(sys, "frozen", False) else __file__))
+ARQUIVO_CONFIG = os.path.join(PASTA_EXECUTAVEL, "emissor_config.ini")
+
+
+def _ler_caminho_armazenamento(padrao: str) -> str:
+    """Lê o caminho do servidor de emissor_config.ini (ao lado do .exe), para que o TI possa
+    trocar o servidor sem gerar um novo executável. Sem o arquivo, usa o valor padrão."""
+    config = configparser.ConfigParser(interpolation=None)
+    try:
+        # utf-8-sig aceita o arquivo salvo pelo Bloco de Notas com ou sem BOM.
+        config.read(ARQUIVO_CONFIG, encoding="utf-8-sig")
+    except (configparser.Error, OSError, UnicodeDecodeError):
+        return padrao
+    return config.get("armazenamento", "caminho", fallback=padrao).strip() or padrao
+
+
+# Caminho UNC do servidor central de armazenamento. Configure em emissor_config.ini.
+CAMINHO_ARMAZENAMENTO = _ler_caminho_armazenamento(r"\\SRV-ARQ\Autorizacoes")
+
+# Versão gravada automaticamente no _versao.py pela geração do .exe no GitHub.
+try:
+    from _versao import VERSAO
+except ImportError:
+    VERSAO = "desenvolvimento"
 
 # Textos fixos do documento (extraídos do modelo aprovado pela diretoria).
 # Ajuste aqui se a lei, o decreto ou o signatário mudarem — não precisa tocar no resto do código.
@@ -387,7 +412,7 @@ def imagem_para_pdf(caminho_imagem: str, caminho_pdf: str) -> None:
 class AppTurismo:
     def __init__(self, root):
         self.root = root
-        self.root.title("Emissor de Autorização - Entrada de Veículo de Turismo")
+        self.root.title(f"Emissor de Autorização - Entrada de Veículo de Turismo ({VERSAO})")
         self.root.geometry("680x780")
 
         self.comprovante_path = ""
@@ -715,7 +740,47 @@ class AppTurismo:
             self.btn_gerar.config(state="normal", text="Gerar Documento Final")
 
 
+def autoteste() -> None:
+    """Usado pela geração automática do .exe: monta a janela e gera um PDF de exemplo
+    sem interação, para garantir que o executável abre e tem todas as bibliotecas.
+    Grava o resultado em autoteste_resultado.txt e sai com código 0 (ok) ou 1 (falha)."""
+    import traceback
+    resultado = os.path.join(tempfile.gettempdir(), "autoteste_resultado.txt")
+    try:
+        root = tk.Tk()
+        root.withdraw()
+        AppTurismo(root)
+        root.update()
+        root.destroy()
+
+        pasta = tempfile.mkdtemp()
+        caminho_qr = os.path.join(pasta, "qr.png")
+        gerar_qr_code("AUTOTESTE", caminho_qr)
+        dados = {
+            "numero": "0000/0000", "empresa_responsavel": "Teste", "cnpj_cpf": "0", "responsavel_legal": "Teste",
+            "documento_responsavel": "0", "telefone": "0", "tipo_veiculo": "Ônibus", "placa": "ABC1D23",
+            "empresa_transporte": "Teste", "entrada": "01/01/2026 08:00", "saida": "01/01/2026 18:00",
+            "passageiros": "1", "cadastur_veiculo": "", "cadastur_imovel": "",
+            "destino": "Rodoviária Municipal / Estacionamento Oficial", "zona_zac": "Verde",
+        }
+        caminho_pdf = os.path.join(pasta, "autoteste.pdf")
+        criar_autorizacao(dados, "AUTOTESTE", caminho_qr, caminho_pdf)
+        paginas = len(PdfReader(caminho_pdf).pages)
+        if paginas != 2:
+            raise RuntimeError(f"PDF de autoteste com {paginas} páginas (esperado: 2).")
+        brasao = "com brasão" if os.path.exists(CAMINHO_BRASAO) else "SEM brasão"
+        with open(resultado, "w", encoding="utf-8") as f:
+            f.write(f"OK {VERSAO} ({brasao}) | servidor: {CAMINHO_ARMAZENAMENTO}\n")
+        sys.exit(0)
+    except Exception:
+        with open(resultado, "w", encoding="utf-8") as f:
+            f.write("FALHA\n" + traceback.format_exc())
+        sys.exit(1)
+
+
 if __name__ == "__main__":
+    if "--autoteste" in sys.argv:
+        autoteste()
     if not os.path.exists(CAMINHO_BRASAO):
         print(f"Aviso: brasao_guarapari.png não encontrado em {PASTA_SCRIPT}. "
               f"O documento será gerado sem o brasão no cabeçalho.", file=sys.stderr)

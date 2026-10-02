@@ -41,26 +41,37 @@ py -m pip install reportlab qrcode pypdf pillow tkcalendar
   mesma pasta do script, ou embutido no .exe via `--add-data`)
 - `brasao_guarapari.ico` — ícone do executável
 
-## Configuração pendente
-- `CAMINHO_ARMAZENAMENTO` no topo do script está com valor placeholder
-  (`\\SRV-ARQ\Autorizacoes`) — precisa apontar para o servidor real antes de
-  ir para produção.
+## Configuração
+- O caminho do servidor fica em `emissor_config.ini`, na MESMA pasta do `.exe`
+  (seção `[armazenamento]`, chave `caminho`). Trocar o servidor não exige gerar
+  outro `.exe`: basta editar o arquivo e reabrir o programa. Sem o arquivo, o
+  sistema usa o padrão `\\SRV-ARQ\Autorizacoes` (placeholder).
 - Pasta de armazenamento precisa ter permissão de escrita para os usuários/
-  máquinas que rodam o `.exe` (grupo AD sugerido: `GG-Autorizacoes-Write`).
+  máquinas que rodam o `.exe` (grupo AD sugerido: `GG-Autorizacoes-Usuarios`).
 - Pasta `_controle` dentro do armazenamento é criada automaticamente pelo
   script na primeira execução (guarda `contador.txt` e o lock da numeração).
 
-## Empacotamento (.exe)
+## Geração do .exe (automática)
+O GitHub gera o `.exe` sozinho (`.github/workflows/gerar-exe.yml`, Windows +
+Python 3.12 + versões fixadas em `requirements.txt`):
+- **Pedido de junção (pull request):** gera e roda o autoteste; o `.exe` fica
+  disponível para teste na aba "Actions" do pedido (por 14 dias).
+- **Juntado no ramo principal:** gera, testa e publica em **Releases**
+  (`EmissorAutorizacaoOnibus.exe` + `emissor_config.ini`), com versão `vN`.
+- A versão aparece no título da janela do programa.
+- Autoteste: `EmissorAutorizacaoOnibus.exe --autoteste` abre a janela sem
+  exibi-la, gera um PDF de exemplo e grava o resultado (incluindo o caminho do
+  servidor configurado) em `%TEMP%\autoteste_resultado.txt`.
+- O brasão (`brasao_guarapari.png` / `.ico`) precisa estar no repositório para
+  entrar no `.exe`; sem ele, o documento sai sem brasão (a geração avisa).
+
+Geração manual (só se necessário), na pasta do projeto:
 ```
-py -m pip install pyinstaller
+py -m pip install -r requirements.txt pyinstaller==6.22.3
 py -m PyInstaller --onefile --windowed --name "EmissorAutorizacaoOnibus" ^
     --icon="brasao_guarapari.ico" --add-data "brasao_guarapari.png;." ^
     --hidden-import babel.numbers sistema_onibus.py
 ```
-Saída em `dist\EmissorAutorizacaoOnibus.exe` — único arquivo a distribuir.
-Gerar dentro da pasta do usuário (ex.: `%USERPROFILE%\Emissor`) para evitar
-`PermissionError` ao regravar o `.spec`. Antes de gerar de novo, apagar `build`,
-`dist` e o `.spec` antigos. Usar `py` (não `python`) na VM de build.
 
 ## Distribuição planejada
 - `.exe` copiado para pasta de rede somente-leitura (ex: `\\SRV-APPS\Deploy\Autorizacoes\`)

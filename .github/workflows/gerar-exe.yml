@@ -1,0 +1,96 @@
+# Gera o EmissorAutorizacaoOnibus.exe automaticamente no Windows.
+# - Em pedidos de junção (pull request): gera e testa o .exe, sem publicar.
+# - Ao juntar no ramo principal: gera, testa e publica em "Releases" para download.
+name: Gerar executável
+
+on:
+  push:
+    branches: [sistema_onibus]
+    paths:
+      - "sistema_onibus.py"
+      - "requirements.txt"
+      - "emissor_config.ini"
+      - "brasao_guarapari.*"
+      - ".github/workflows/gerar-exe.yml"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  gerar:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Instalar bibliotecas
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller==6.22.3
+
+      - name: Definir versão
+        id: versao
+        run: |
+          $data = [System.TimeZoneInfo]::ConvertTimeBySystemTimeZoneId([DateTime]::UtcNow, "E. South America Standard Time").ToString("dd/MM/yyyy")
+          $versao = "v${{ github.run_number }} - $data"
+          "VERSAO = `"$versao`"" | Out-File -Encoding utf8 _versao.py
+          "tag=v${{ github.run_number }}" >> $env:GITHUB_OUTPUT
+          "texto=$versao" >> $env:GITHUB_OUTPUT
+
+      - name: Gerar o .exe
+        run: |
+          $opcoes = @("--onefile", "--windowed", "--name", "EmissorAutorizacaoOnibus", "--hidden-import", "babel.numbers")
+          if (Test-Path brasao_guarapari.png) {
+            $opcoes += @("--add-data", "brasao_guarapari.png;.")
+          } else {
+            Write-Host "::warning::brasao_guarapari.png não está no repositório; o .exe sairá sem o brasão no documento."
+          }
+          if (Test-Path brasao_guarapari.ico) { $opcoes += @("--icon", "brasao_guarapari.ico") }
+          python -m PyInstaller @opcoes sistema_onibus.py
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Testar o .exe (abre a janela e gera um PDF de exemplo)
+        timeout-minutes: 5
+        run: |
+          $processo = Start-Process -FilePath "dist\EmissorAutorizacaoOnibus.exe" -ArgumentList "--autoteste" -Wait -PassThru
+          Get-Content "$env:TEMP\autoteste_resultado.txt"
+          if ($processo.ExitCode -ne 0) { Write-Host "::error::O autoteste do .exe falhou."; exit 1 }
+
+      - name: Juntar arquivos para download
+        run: |
+          New-Item -ItemType Directory pacote | Out-Null
+          Copy-Item dist\EmissorAutorizacaoOnibus.exe, emissor_config.ini pacote\
+
+      - name: Disponibilizar para teste (pedidos de junção)
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: EmissorAutorizacaoOnibus-${{ steps.versao.outputs.tag }}
+          path: pacote\
+          retention-days: 14
+
+      - name: Publicar versão em Releases
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/sistema_onibus'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.versao.outputs.tag }}
+          name: Emissor de Autorização ${{ steps.versao.outputs.texto }}
+          target_commitish: ${{ github.sha }}
+          files: |
+            pacote/EmissorAutorizacaoOnibus.exe
+            pacote/emissor_config.ini
+          body: |
+            Versão gerada e testada automaticamente a partir do commit ${{ github.sha }}.
+
+            **Como instalar:** copie o `EmissorAutorizacaoOnibus.exe` para a pasta de distribuição na rede.
+            O `emissor_config.ini` só precisa ser copiado na primeira instalação (ou se quiser trocar o servidor).
