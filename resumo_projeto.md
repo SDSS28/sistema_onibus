@@ -21,7 +21,8 @@ Lei 5.111/2025 e no Decreto nº 645/2025. Gera um PDF com:
   usuários simultâneos
 - Mescla o PDF gerado com o comprovante de pagamento (PDF ou imagem) anexado
   pelo usuário, formando um documento único de duas páginas
-- Salva o resultado na pasta centralizada de rede (organizada por ano/mês). Só
+- Salva o resultado na pasta centralizada de rede, em `Autorizações Emitidas\AAAA\MM`
+  (separada da `_controle`, para dar acesso de leitura só aos documentos). Só
   se o servidor falhar, salva na Área de Trabalho e avisa para copiar o arquivo
   ao servidor depois. Só dá erro se nenhum dos dois funcionar.
 - Se o servidor estiver inacessível na hora de numerar, usa um contador local
