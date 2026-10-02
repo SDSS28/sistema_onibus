@@ -4,3 +4,6 @@ build/
 dist/
 *.spec
 _versao.py
+chave_assinatura.pem
+*.pem
+validar-autorizacao.html

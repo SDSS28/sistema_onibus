@@ -10,6 +10,7 @@ on:
       - "sistema_onibus.py"
       - "requirements.txt"
       - "emissor_config.ini"
+      - "validador.html"
       - "brasao_guarapari.*"
       - ".github/workflows/gerar-exe.yml"
   pull_request:
@@ -49,7 +50,8 @@ jobs:
 
       - name: Gerar o .exe
         run: |
-          $opcoes = @("--onefile", "--windowed", "--name", "EmissorAutorizacaoOnibus", "--hidden-import", "babel.numbers")
+          $opcoes = @("--onefile", "--windowed", "--name", "EmissorAutorizacaoOnibus", "--hidden-import", "babel.numbers",
+                      "--add-data", "validador.html;.")
           if (Test-Path brasao_guarapari.png) {
             $opcoes += @("--add-data", "brasao_guarapari.png;.")
           } else {

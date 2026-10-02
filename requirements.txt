@@ -6,3 +6,4 @@ pypdf==6.19.0
 pillow==12.3.0
 tkcalendar==1.6.1
 babel==2.18.0
+cryptography==50.0.2
