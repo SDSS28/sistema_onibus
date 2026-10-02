@@ -48,9 +48,11 @@ jobs:
           "tag=v${{ github.run_number }}" >> $env:GITHUB_OUTPUT
           "texto=$versao" >> $env:GITHUB_OUTPUT
 
+      # Formato "pasta" (onedir): o .exe e as bibliotecas ficam já descompactados em _internal\.
+      # Abre bem mais rápido que o arquivo único, que descompactava ~30 MB a cada abertura.
       - name: Gerar o .exe
         run: |
-          $opcoes = @("--onefile", "--windowed", "--name", "EmissorAutorizacaoOnibus", "--hidden-import", "babel.numbers",
+          $opcoes = @("--onedir", "--windowed", "--name", "EmissorAutorizacaoOnibus", "--hidden-import", "babel.numbers",
                       "--add-data", "validador.html;.")
           if (Test-Path brasao_guarapari.png) {
             $opcoes += @("--add-data", "brasao_guarapari.png;.")
@@ -64,14 +66,17 @@ jobs:
       - name: Testar o .exe (abre a janela e gera um PDF de exemplo)
         timeout-minutes: 5
         run: |
-          $processo = Start-Process -FilePath "dist\EmissorAutorizacaoOnibus.exe" -ArgumentList "--autoteste" -Wait -PassThru
+          $processo = Start-Process -FilePath "dist\EmissorAutorizacaoOnibus\EmissorAutorizacaoOnibus.exe" -ArgumentList "--autoteste" -Wait -PassThru
           Get-Content "$env:TEMP\autoteste_resultado.txt"
           if ($processo.ExitCode -ne 0) { Write-Host "::error::O autoteste do .exe falhou."; exit 1 }
 
+      # O .zip leva o .exe e a pasta _internal na raiz (sem o emissor_config.ini), para ser extraído
+      # direto na pasta do servidor sem sobrescrever a configuração e a chave que já estão lá.
       - name: Juntar arquivos para download
         run: |
           New-Item -ItemType Directory pacote | Out-Null
-          Copy-Item dist\EmissorAutorizacaoOnibus.exe, emissor_config.ini pacote\
+          Compress-Archive -Path "dist\EmissorAutorizacaoOnibus\*" -DestinationPath "pacote\EmissorAutorizacaoOnibus.zip"
+          Copy-Item emissor_config.ini pacote\
 
       - name: Disponibilizar para teste (pedidos de junção)
         if: github.event_name == 'pull_request'
@@ -89,10 +94,13 @@ jobs:
           name: Emissor de Autorização ${{ steps.versao.outputs.texto }}
           target_commitish: ${{ github.sha }}
           files: |
-            pacote/EmissorAutorizacaoOnibus.exe
+            pacote/EmissorAutorizacaoOnibus.zip
             pacote/emissor_config.ini
           body: |
             Versão gerada e testada automaticamente a partir do commit ${{ github.sha }}.
 
-            **Como instalar:** copie o `EmissorAutorizacaoOnibus.exe` para a pasta de distribuição na rede.
-            O `emissor_config.ini` só precisa ser copiado na primeira instalação (ou se quiser trocar o servidor).
+            **Como instalar/atualizar (fora do horário de uso):**
+            1. Baixe o `EmissorAutorizacaoOnibus.zip`, clique com o botão direito > Propriedades > marque **Desbloquear** > OK.
+            2. Extraia o conteúdo **dentro da pasta do programa no servidor**, substituindo os arquivos existentes.
+               O `emissor_config.ini` e a `chave_assinatura.pem` dessa pasta não são tocados.
+            3. O `emissor_config.ini` aqui publicado é só um modelo, para a primeira instalação.
