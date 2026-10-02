@@ -1,5 +1,7 @@
+import base64
 import configparser
 import io
+import json
 import os
 import re
 import sys
@@ -22,6 +24,10 @@ from reportlab.platypus import (
 )
 from pypdf import PdfWriter, PdfReader
 from PIL import Image as PILImage
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature, encode_dss_signature
 
 PADRAO_DATA = "%d/%m/%Y"
 PADRAO_DATA_HORA = "%d/%m/%Y %H:%M"
@@ -41,20 +47,34 @@ PASTA_EXECUTAVEL = os.path.dirname(os.path.abspath(sys.executable if getattr(sys
 ARQUIVO_CONFIG = os.path.join(PASTA_EXECUTAVEL, "emissor_config.ini")
 
 
-def _ler_caminho_armazenamento(padrao: str) -> str:
-    """Lê o caminho do servidor de emissor_config.ini (ao lado do .exe), para que o TI possa
-    trocar o servidor sem gerar um novo executável. Sem o arquivo, usa o valor padrão."""
+def _ler_config() -> configparser.ConfigParser:
+    """Lê emissor_config.ini (ao lado do .exe), para que o TI possa ajustar servidor, chave e
+    página de validação sem gerar um novo executável. Arquivo ausente ou inválido = padrões."""
     config = configparser.ConfigParser(interpolation=None)
     try:
         # utf-8-sig aceita o arquivo salvo pelo Bloco de Notas com ou sem BOM.
         config.read(ARQUIVO_CONFIG, encoding="utf-8-sig")
     except (configparser.Error, OSError, UnicodeDecodeError):
-        return padrao
-    return config.get("armazenamento", "caminho", fallback=padrao).strip() or padrao
+        return configparser.ConfigParser(interpolation=None)
+    return config
 
+
+def _config(secao: str, chave: str, padrao: str) -> str:
+    return _CONFIG.get(secao, chave, fallback=padrao).strip() or padrao
+
+
+_CONFIG = _ler_config()
 
 # Caminho UNC do servidor central de armazenamento. Configure em emissor_config.ini.
-CAMINHO_ARMAZENAMENTO = _ler_caminho_armazenamento(r"\\SRV-ARQ\Autorizacoes")
+CAMINHO_ARMAZENAMENTO = _config("armazenamento", "caminho", r"\\SRV-ARQ\Autorizacoes")
+
+# Endereço da página de validação aberta pelo QR Code (publicada no site da prefeitura).
+URL_VALIDACAO = _config("validacao", "url", "https://www.guarapari.es.gov.br/validar-autorizacao/")
+
+# Chave privada que assina os dados do QR Code. Caminho relativo = pasta do .exe.
+# Gerada uma única vez com: EmissorAutorizacaoOnibus.exe --gerar-chave
+CAMINHO_CHAVE = os.path.join(PASTA_EXECUTAVEL, _config("validacao", "chave", "chave_assinatura.pem"))
+MODELO_PAGINA_VALIDACAO = os.path.join(PASTA_SCRIPT, "validador.html")
 
 # Versão gravada automaticamente no _versao.py pela geração do .exe no GitHub.
 try:
@@ -237,6 +257,88 @@ def _gravar_arquivo(pasta: str, nome_arquivo: str, conteudo: bytes) -> str:
     return caminho
 
 
+def _b64url(dados: bytes) -> str:
+    return base64.urlsafe_b64encode(dados).rstrip(b"=").decode("ascii")
+
+
+def carregar_chave_assinatura():
+    """Lê a chave privada. Sem ela o QR Code não pode ser assinado e o documento não é emitido."""
+    try:
+        with open(CAMINHO_CHAVE, "rb") as f:
+            return serialization.load_pem_private_key(f.read(), password=None)
+    except (OSError, ValueError, TypeError) as erro:
+        raise RuntimeError(
+            f"Não foi possível ler a chave de assinatura do QR Code:\n{CAMINHO_CHAVE}\n\nMotivo: {erro}\n\n"
+            "Sem ela os documentos não podem ser validados pelos fiscais. Peça ao TI para conferir o "
+            "arquivo (ou gerá-lo uma única vez com: EmissorAutorizacaoOnibus.exe --gerar-chave)."
+        )
+
+
+def montar_url_validacao(dados: dict, hash_seguranca: str, chave_privada) -> str:
+    """Monta o link do QR Code: página de validação + dados do documento + assinatura ECDSA P-256.
+    Os dados ficam depois do '#', que o navegador não envia ao site: a página confere a assinatura
+    no próprio celular, sem banco de dados. CPF, RG e telefone não entram no QR Code."""
+    campos = [
+        1,  # versão do formato
+        dados["numero"], dados["placa"], dados["tipo_veiculo"], dados["empresa_responsavel"],
+        dados["empresa_transporte"], dados["destino"], dados["zona_zac"], dados["entrada"],
+        dados["saida"], dados["passageiros"], datetime.now().strftime(PADRAO_DATA_HORA), hash_seguranca,
+    ]
+    carga = _b64url(json.dumps(campos, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+    r, s = decode_dss_signature(chave_privada.sign(carga.encode("ascii"), ec.ECDSA(hashes.SHA256())))
+    # O navegador (WebCrypto) espera a assinatura no formato r||s de 32 bytes cada.
+    assinatura = _b64url(r.to_bytes(32, "big") + s.to_bytes(32, "big"))
+    return f"{URL_VALIDACAO}#{carga}.{assinatura}"
+
+
+def verificar_url_validacao(url: str, chave_publica) -> bool:
+    """Mesma conferência que a página faz no celular (usada pelo autoteste)."""
+    carga, assinatura = url.split("#", 1)[1].split(".")
+    bruta = base64.urlsafe_b64decode(assinatura + "=" * (-len(assinatura) % 4))
+    der = encode_dss_signature(int.from_bytes(bruta[:32], "big"), int.from_bytes(bruta[32:], "big"))
+    try:
+        chave_publica.verify(der, carga.encode("ascii"), ec.ECDSA(hashes.SHA256()))
+        return True
+    except InvalidSignature:
+        return False
+
+
+def gerar_chave_e_pagina() -> str:
+    """Executado uma única vez pelo TI (--gerar-chave): cria a chave de assinatura ao lado do .exe e
+    a página de validação, já com a chave pública embutida, para a equipe do site publicar."""
+    if os.path.exists(CAMINHO_CHAVE):
+        raise RuntimeError(
+            f"Já existe uma chave em:\n{CAMINHO_CHAVE}\n\nEla NÃO foi substituída: os documentos já "
+            "emitidos dependem dela para serem validados. Se precisar mesmo de uma nova chave, mova a "
+            "atual para outro lugar e rode de novo."
+        )
+    chave = ec.generate_private_key(ec.SECP256R1())
+    with open(CAMINHO_CHAVE, "xb") as f:
+        f.write(chave.private_bytes(
+            serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()
+        ))
+    return gerar_pagina_validacao(chave.public_key())
+
+
+def gerar_pagina_validacao(chave_publica) -> str:
+    spki = base64.b64encode(chave_publica.public_bytes(
+        serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
+    )).decode("ascii")
+    brasao = ""
+    if os.path.exists(CAMINHO_BRASAO):
+        with PILImage.open(CAMINHO_BRASAO) as img:
+            img.thumbnail((160, 180))
+            buffer = io.BytesIO()
+            img.save(buffer, format="PNG", optimize=True)
+        brasao = "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
+    with open(MODELO_PAGINA_VALIDACAO, encoding="utf-8") as f:
+        pagina = f.read().replace("__CHAVE_PUBLICA__", spki).replace("__BRASAO__", brasao)
+    destino = os.path.join(PASTA_EXECUTAVEL, "validar-autorizacao.html")
+    with open(destino, "w", encoding="utf-8") as f:
+        f.write(pagina)
+    return destino
+
+
 def gerar_qr_code(dados: str, caminho_qr: str) -> None:
     qr = qrcode.QRCode(version=1, box_size=10, border=2)
     qr.add_data(dados)
@@ -375,7 +477,7 @@ def criar_autorizacao(dados: dict, hash_seguranca: str, caminho_qr: str, arquivo
     elementos.append(Paragraph(f"ZAC: ZONA {dados['zona_zac'].upper()}", estilo_senha_info))
     elementos.append(Spacer(1, 12))
 
-    img_qr_grande = RLImage(caminho_qr, width=160, height=160)
+    img_qr_grande = RLImage(caminho_qr, width=220, height=220)
     img_qr_grande.hAlign = "CENTER"
     elementos.append(img_qr_grande)
     elementos.append(Spacer(1, 4))
@@ -670,16 +772,15 @@ class AppTurismo:
 
         arquivos_temp = []
         try:
+            # Antes de consumir um número: sem a chave o documento não pode ser emitido.
+            chave_assinatura = carregar_chave_assinatura()
             dados["numero"], numero_provisorio = obter_proximo_numero()
 
             tmp_dir = tempfile.gettempdir()
             sufixo = uuid.uuid4().hex[:8]
 
             hash_unica = str(uuid.uuid4()).upper()
-            conteudo_qr = (
-                f"AUTORIZACAO|NUMERO:{dados['numero']}|PLACA:{dados['placa']}|"
-                f"ENTRADA:{dados['entrada']}|SAIDA:{dados['saida']}|ZAC:{dados['zona_zac']}|HASH:{hash_unica}"
-            )
+            conteudo_qr = montar_url_validacao(dados, hash_unica, chave_assinatura)
 
             caminho_qr = os.path.join(tmp_dir, f"qr_{sufixo}.png")
             gerar_qr_code(conteudo_qr, caminho_qr)
@@ -768,8 +869,6 @@ def autoteste() -> None:
         root.destroy()
 
         pasta = tempfile.mkdtemp()
-        caminho_qr = os.path.join(pasta, "qr.png")
-        gerar_qr_code("AUTOTESTE", caminho_qr)
         dados = {
             "numero": "0000/0000", "empresa_responsavel": "Teste", "cnpj_cpf": "0", "responsavel_legal": "Teste",
             "documento_responsavel": "0", "telefone": "0", "tipo_veiculo": "Ônibus", "placa": "ABC1D23",
@@ -777,6 +876,23 @@ def autoteste() -> None:
             "passageiros": "1", "cadastur_veiculo": "", "cadastur_imovel": "",
             "destino": "Rodoviária Municipal / Estacionamento Oficial", "zona_zac": "Verde",
         }
+        chave = ec.generate_private_key(ec.SECP256R1())
+        url = montar_url_validacao(dados, "AUTOTESTE", chave)
+        if not verificar_url_validacao(url, chave.public_key()):
+            raise RuntimeError("A assinatura do QR Code não confere.")
+        # Troca a placa dentro dos dados, mantendo a assinatura original: tem de ser recusado.
+        base, fragmento = url.split("#", 1)
+        carga, assinatura = fragmento.split(".")
+        campos = json.loads(base64.urlsafe_b64decode(carga + "=" * (-len(carga) % 4)))
+        campos[2] = "XYZ9Z99"
+        carga_adulterada = _b64url(json.dumps(campos, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+        if verificar_url_validacao(f"{base}#{carga_adulterada}.{assinatura}", chave.public_key()):
+            raise RuntimeError("Um QR Code adulterado foi aceito como válido.")
+        with open(MODELO_PAGINA_VALIDACAO, encoding="utf-8") as f:
+            if "__CHAVE_PUBLICA__" not in f.read():
+                raise RuntimeError("Modelo da página de validação não encontrado ou inválido.")
+        caminho_qr = os.path.join(pasta, "qr.png")
+        gerar_qr_code(url, caminho_qr)
         caminho_pdf = os.path.join(pasta, "autoteste.pdf")
         criar_autorizacao(dados, "AUTOTESTE", caminho_qr, caminho_pdf)
         paginas = len(PdfReader(caminho_pdf).pages)
@@ -784,7 +900,7 @@ def autoteste() -> None:
             raise RuntimeError(f"PDF de autoteste com {paginas} páginas (esperado: 2).")
         brasao = "com brasão" if os.path.exists(CAMINHO_BRASAO) else "SEM brasão"
         with open(resultado, "w", encoding="utf-8") as f:
-            f.write(f"OK {VERSAO} ({brasao}) | servidor: {CAMINHO_ARMAZENAMENTO}\n")
+            f.write(f"OK {VERSAO} ({brasao}) | servidor: {CAMINHO_ARMAZENAMENTO} | validação: {URL_VALIDACAO}\n")
         sys.exit(0)
     except Exception:
         with open(resultado, "w", encoding="utf-8") as f:
@@ -795,6 +911,23 @@ def autoteste() -> None:
 if __name__ == "__main__":
     if "--autoteste" in sys.argv:
         autoteste()
+    if "--gerar-chave" in sys.argv:
+        janela = tk.Tk()
+        janela.withdraw()
+        try:
+            pagina = gerar_chave_e_pagina()
+            messagebox.showinfo(
+                "Chave de assinatura criada",
+                f"Chave criada em:\n{CAMINHO_CHAVE}\n\nPágina de validação criada em:\n{pagina}\n\n"
+                "1. Mantenha a chave nesta pasta e faça cópia de segurança dela (sem ela, os documentos "
+                "já emitidos não poderão mais ser validados). NUNCA a envie por e-mail ou publique.\n"
+                "2. Entregue o arquivo validar-autorizacao.html à equipe do site para publicação.\n"
+                "3. Confira se o endereço publicado é o mesmo da linha 'url' do emissor_config.ini."
+            )
+        except Exception as erro:
+            messagebox.showerror("Chave de assinatura", str(erro))
+        janela.destroy()
+        sys.exit(0)
     if not os.path.exists(CAMINHO_BRASAO):
         print(f"Aviso: brasao_guarapari.png não encontrado em {PASTA_SCRIPT}. "
               f"O documento será gerado sem o brasão no cabeçalho.", file=sys.stderr)

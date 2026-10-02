@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<!--
+  Página de validação das Autorizações de Entrada de Veículo de Turismo (SEMSET / Guarapari).
+  Este arquivo é um MODELO: o EmissorAutorizacaoOnibus.exe --gerar-chave cria o
+  validar-autorizacao.html com a chave pública e o brasão já embutidos. Publique aquele arquivo.
+
+  Como funciona: o QR Code abre esta página com os dados do documento e uma assinatura digital
+  depois do "#". O navegador não envia essa parte ao servidor do site; a assinatura é conferida
+  no próprio celular com a chave pública abaixo. A página não guarda nem envia nenhum dado.
+  Requisito: ser servida por HTTPS (a conferência criptográfica do navegador exige).
+-->
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Validação de Autorização de Turismo · Prefeitura de Guarapari</title>
+<style>
+  :root {
+    --fundo: #f3f5f8; --cartao: #ffffff; --texto: #1c2430; --suave: #5b6676; --linha: #dde2ea;
+    --ok: #0f7a3d; --ok-fundo: #e5f5ec; --erro: #b3261e; --erro-fundo: #fbe9e7;
+    --alerta: #8a5a00; --alerta-fundo: #fff4d6; --azul: #1a4f8b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --fundo: #11161d; --cartao: #1a212b; --texto: #e8edf3; --suave: #9aa6b5; --linha: #2c3643;
+      --ok: #5fd08f; --ok-fundo: #163323; --erro: #ff8a80; --erro-fundo: #3a1714;
+      --alerta: #ffc65c; --alerta-fundo: #3a2c0c; --azul: #8cb8ec;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--fundo); color: var(--texto);
+    font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  }
+  main { max-width: 560px; margin: 0 auto; padding: 16px; }
+  header { text-align: center; padding: 8px 0 16px; }
+  header img { height: 72px; width: auto; }
+  header .orgao { font-weight: 700; font-size: 15px; margin-top: 6px; }
+  header .setor { font-size: 13px; color: var(--suave); }
+  .status {
+    border-radius: 14px; padding: 18px 16px; text-align: center; margin-bottom: 14px;
+    border: 2px solid currentColor;
+  }
+  .status .icone { font-size: 40px; line-height: 1; }
+  .status .titulo { font-size: 21px; font-weight: 800; margin-top: 6px; letter-spacing: .2px; }
+  .status .detalhe { font-size: 14px; margin-top: 4px; }
+  .ok { color: var(--ok); background: var(--ok-fundo); }
+  .erro { color: var(--erro); background: var(--erro-fundo); }
+  .alerta { color: var(--alerta); background: var(--alerta-fundo); }
+  .neutro { color: var(--suave); background: var(--cartao); }
+  .periodo { border-radius: 12px; padding: 10px 14px; font-weight: 700; text-align: center; margin-bottom: 14px; }
+  .placa {
+    background: var(--cartao); border: 1px solid var(--linha); border-radius: 12px;
+    text-align: center; padding: 12px; margin-bottom: 14px;
+  }
+  .placa .rotulo { font-size: 12px; color: var(--suave); text-transform: uppercase; letter-spacing: .6px; }
+  .placa .valor { font-size: 38px; font-weight: 800; letter-spacing: 2px; }
+  dl { background: var(--cartao); border: 1px solid var(--linha); border-radius: 12px; margin: 0 0 14px; padding: 4px 14px; }
+  dl div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 12px; padding: 9px 0; border-bottom: 1px solid var(--linha); }
+  dl div:last-child { border-bottom: 0; }
+  dt { color: var(--suave); font-size: 14px; }
+  dd { margin: 0; font-weight: 600; text-align: right; overflow-wrap: anywhere; }
+  .zona { display: inline-block; padding: 1px 10px; border-radius: 99px; color: #fff; font-weight: 700; }
+  .zona-Verde { background: #1e8449; } .zona-Amarela { background: #b7950b; } .zona-Vermelha { background: #c0392b; }
+  .codigo { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; }
+  .instrucoes { font-size: 14px; color: var(--suave); background: var(--cartao); border: 1px solid var(--linha); border-radius: 12px; padding: 12px 14px; }
+  .instrucoes strong { color: var(--texto); }
+  .instrucoes ol { margin: 6px 0 0; padding-left: 20px; }
+  footer { text-align: center; font-size: 12px; color: var(--suave); padding: 18px 0 8px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <img id="brasao" alt="Brasão de Guarapari" hidden>
+    <div class="orgao">PREFEITURA MUNICIPAL DE GUARAPARI</div>
+    <div class="setor">Secretaria Municipal de Segurança, Trânsito e Transporte – SEMSET</div>
+  </header>
+
+  <section id="status" class="status neutro" aria-live="polite">
+    <div class="icone" id="status-icone">…</div>
+    <div class="titulo" id="status-titulo">Verificando documento</div>
+    <div class="detalhe" id="status-detalhe"></div>
+  </section>
+
+  <section id="dados" hidden>
+    <div id="periodo" class="periodo"></div>
+    <div class="placa">
+      <div class="rotulo">Placa do veículo</div>
+      <div class="valor" id="v-placa"></div>
+    </div>
+    <dl>
+      <div><dt>Autorização nº</dt><dd id="v-numero"></dd></div>
+      <div><dt>Tipo de veículo</dt><dd id="v-tipo"></dd></div>
+      <div><dt>Entrada</dt><dd id="v-entrada"></dd></div>
+      <div><dt>Saída</dt><dd id="v-saida"></dd></div>
+      <div><dt>Zona (ZAC)</dt><dd><span id="v-zona" class="zona"></span></dd></div>
+      <div><dt>Destino</dt><dd id="v-destino"></dd></div>
+      <div><dt>Passageiros</dt><dd id="v-passageiros"></dd></div>
+      <div><dt>Empresa / entidade responsável</dt><dd id="v-empresa"></dd></div>
+      <div><dt>Empresa de transporte</dt><dd id="v-transporte"></dd></div>
+      <div><dt>Emitida em</dt><dd id="v-emissao"></dd></div>
+      <div><dt>Código de autenticidade</dt><dd class="codigo" id="v-hash"></dd></div>
+    </dl>
+    <div class="instrucoes">
+      <strong>Confira no local:</strong>
+      <ol>
+        <li>A placa acima é a mesma do veículo.</li>
+        <li>O código de autenticidade é o mesmo impresso no rodapé do documento.</li>
+        <li>O número de passageiros e o horário estão de acordo.</li>
+      </ol>
+    </div>
+  </section>
+
+  <footer>Validação oficial · Decreto nº 645/2025 · Os dados são lidos do QR Code e não ficam armazenados.</footer>
+</main>
+
+<script>
+(function () {
+  "use strict";
+  var CHAVE_PUBLICA = "__CHAVE_PUBLICA__";
+  var BRASAO = "__BRASAO__";
+
+  if (BRASAO && BRASAO.indexOf("__") !== 0) {
+    var img = document.getElementById("brasao");
+    img.src = BRASAO;
+    img.hidden = false;
+  }
+
+  function el(id) { return document.getElementById(id); }
+
+  function status(tipo, icone, titulo, detalhe) {
+    el("status").className = "status " + tipo;
+    el("status-icone").textContent = icone;
+    el("status-titulo").textContent = titulo;
+    el("status-detalhe").textContent = detalhe || "";
+  }
+
+  function bytes(base64) {
+    var s = base64.replace(/-/g, "+").replace(/_/g, "/");
+    while (s.length % 4) s += "=";
+    var bin = atob(s), out = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+
+  function data(texto) {
+    var m = /^(\d{2})\/(\d{2})\/(\d{4}) (\d{2}):(\d{2})$/.exec(texto || "");
+    return m ? new Date(+m[3], +m[2] - 1, +m[1], +m[4], +m[5]) : null;
+  }
+
+  function mostrarDados(c) {
+    el("v-placa").textContent = c[2];
+    el("v-numero").textContent = c[1];
+    el("v-tipo").textContent = c[3];
+    el("v-empresa").textContent = c[4];
+    el("v-transporte").textContent = c[5];
+    el("v-destino").textContent = c[6];
+    el("v-zona").textContent = "Zona " + c[7];
+    el("v-zona").className = "zona zona-" + c[7];
+    el("v-entrada").textContent = c[8];
+    el("v-saida").textContent = c[9];
+    el("v-passageiros").textContent = c[10];
+    el("v-emissao").textContent = c[11];
+    el("v-hash").textContent = c[12];
+
+    var agora = new Date(), entrada = data(c[8]), saida = data(c[9]), p = el("periodo");
+    if (entrada && saida && agora < entrada) {
+      p.className = "periodo alerta"; p.textContent = "Autorização ainda NÃO iniciada (começa em " + c[8] + ")";
+    } else if (entrada && saida && agora > saida) {
+      p.className = "periodo erro"; p.textContent = "Autorização VENCIDA (terminou em " + c[9] + ")";
+    } else {
+      p.className = "periodo ok"; p.textContent = "Dentro do período autorizado";
+    }
+    el("dados").hidden = false;
+  }
+
+  async function validar() {
+    // Base64url e "." não precisam de decodificação de URL.
+    var fragmento = location.hash.replace(/^#/, "");
+    if (!fragmento) {
+      status("neutro", "📷", "Leia o QR Code do documento",
+        "Aponte a câmera do celular para o QR Code impresso na autorização.");
+      return;
+    }
+    if (CHAVE_PUBLICA.indexOf("__") === 0) {
+      status("erro", "⚠️", "Página não configurada", "Publique o arquivo gerado pelo emissor (--gerar-chave).");
+      return;
+    }
+    if (!window.crypto || !crypto.subtle) {
+      status("erro", "⚠️", "Não foi possível verificar",
+        "Abra este endereço com https:// ou em um navegador atualizado.");
+      return;
+    }
+    var partes = fragmento.split(".");
+    var valido = false, campos = null;
+    try {
+      if (partes.length !== 2) throw new Error("formato");
+      var chave = await crypto.subtle.importKey(
+        "spki", bytes(CHAVE_PUBLICA), { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]);
+      valido = await crypto.subtle.verify(
+        { name: "ECDSA", hash: "SHA-256" }, chave, bytes(partes[1]), new TextEncoder().encode(partes[0]));
+      if (valido) {
+        campos = JSON.parse(new TextDecoder().decode(bytes(partes[0])));
+        if (!Array.isArray(campos) || campos[0] !== 1 || campos.length < 13) valido = false;
+      }
+    } catch (e) {
+      valido = false;
+    }
+    if (!valido) {
+      status("erro", "✖", "DOCUMENTO INVÁLIDO",
+        "A assinatura digital não confere: o documento pode ser falso ou ter sido alterado. Não aceite.");
+      return;
+    }
+    status("ok", "✔", "DOCUMENTO AUTÊNTICO", "Emitido pela SEMSET – Prefeitura de Guarapari.");
+    mostrarDados(campos);
+  }
+
+  validar();
+})();
+</script>
+</body>
+</html>
