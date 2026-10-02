@@ -31,6 +31,10 @@ PADRAO_PLACA = re.compile(r"^[A-Z]{3}-?\d[A-Z0-9]\d{2}$")  # aceita padrão anti
 PASTA_SCRIPT = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
 CAMINHO_BRASAO = os.path.join(PASTA_SCRIPT, "brasao_guarapari.png")
 
+# Brasão como marca d'água no centro das páginas da autorização (0 = invisível, 1 = cor cheia).
+OPACIDADE_MARCA_DAGUA = 0.08
+LARGURA_MARCA_DAGUA = 380  # em pontos (a página tem 612 de largura)
+
 # Pasta onde fica o .exe (ou este script). No .exe "onefile", o _MEIPASS acima é uma pasta
 # temporária; a configuração precisa ficar ao lado do próprio executável.
 PASTA_EXECUTAVEL = os.path.dirname(os.path.abspath(sys.executable if getattr(sys, "frozen", False) else __file__))
@@ -71,7 +75,7 @@ TEXTO_CONSIDERANDO = (
 
 TEXTO_INTRO = (
     "a entrada, circulação e permanência de excursão turística no território do Município de Guarapari/ES, "
-    "conforme dados abaixo especificados, mediante o cumprimento integral do Decreto nº 654/2025 e das normas "
+    "conforme dados abaixo especificados, mediante o cumprimento integral do Decreto nº 645/2025 e das normas "
     "de trânsito, segurança pública, ordenamento urbano e demais disposições legais aplicáveis."
 )
 
@@ -113,10 +117,10 @@ DESCRICAO_JANELA_ZAC = {
 }
 
 # Textos da página 2 (senha de acesso para o para-brisa).
-TEXTO_SENHA_ARTIGOS = "(Art. 13, parágrafo único, e art. 24, II — Decreto nº 654/2025)"
+TEXTO_SENHA_ARTIGOS = "(Art. 13, parágrafo único, e art. 24, II — Decreto nº 645/2025)"
 TEXTO_SENHA_PROIBICAO = (
     "PROIBIDO TRANSPORTE DE ALIMENTOS, FOGÕES, BOTIJÕES DE GÁS, GELADEIRAS/FREEZERS E ITENS INFLAMÁVEIS "
-    "(Art. 25 do Decreto nº 654/2025) — SUJEITO A RETENÇÃO E REMOÇÃO AO DEPÓSITO MUNICIPAL"
+    "(Art. 25 do Decreto nº 645/2025) — SUJEITO A RETENÇÃO E REMOÇÃO AO DEPÓSITO MUNICIPAL"
 )
 
 
@@ -376,6 +380,16 @@ def criar_autorizacao(dados: dict, hash_seguranca: str, caminho_qr: str, arquivo
     elementos.append(Paragraph(TEXTO_SENHA_PROIBICAO, estilo_senha_alerta))
 
     def _rodape(canvas_obj, doc_obj):
+        # Marca d'água: chamada no início de cada página, antes do conteúdo, por isso fica por baixo dele.
+        if os.path.exists(CAMINHO_BRASAO):
+            canvas_obj.saveState()
+            canvas_obj.setFillAlpha(OPACIDADE_MARCA_DAGUA)
+            canvas_obj.drawImage(
+                CAMINHO_BRASAO, (letter[0] - LARGURA_MARCA_DAGUA) / 2, (letter[1] - LARGURA_MARCA_DAGUA) / 2 - 20,
+                width=LARGURA_MARCA_DAGUA, height=LARGURA_MARCA_DAGUA, preserveAspectRatio=True, mask="auto"
+            )
+            canvas_obj.restoreState()
+
         # Hash fixada na margem inferior da página, independente do tamanho do conteúdo acima.
         canvas_obj.saveState()
         canvas_obj.setFont("Helvetica", 7)

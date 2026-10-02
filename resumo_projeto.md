@@ -3,7 +3,7 @@
 ## O que o sistema faz
 Script Python com interface gráfica (tkinter) que gera a "Autorização de Entrada
 de Veículo de Turismo" da Prefeitura de Guarapari — documento oficial baseado na
-Lei 5.111/2025 e no Decreto nº 654/2025. Gera um PDF com:
+Lei 5.111/2025 e no Decreto nº 645/2025. Gera um PDF com:
 - Cabeçalho com o brasão municipal
 - Texto legal fixo (considerando, autorização, advertências) extraído do modelo oficial
 - Tabelas com dados da excursão, do transporte e do período autorizado
