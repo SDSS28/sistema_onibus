@@ -69,16 +69,26 @@ Python 3.12 + versões fixadas em `requirements.txt`):
 Geração manual (só se necessário), na pasta do projeto:
 ```
 py -m pip install -r requirements.txt pyinstaller==6.22.3
-py -m PyInstaller --onefile --windowed --name "EmissorAutorizacaoOnibus" ^
+py -m PyInstaller --onedir --windowed --name "EmissorAutorizacaoOnibus" ^
     --icon="brasao_guarapari.ico" --add-data "brasao_guarapari.png;." ^
     --add-data "validador.html;." --hidden-import babel.numbers sistema_onibus.py
 ```
 
-## Distribuição planejada
-- `.exe` copiado para pasta de rede somente-leitura (ex: `\\SRV-APPS\Deploy\Autorizacoes\`)
+## Distribuição
+- Formato **pasta** (PyInstaller `--onedir`): `EmissorAutorizacaoOnibus.exe` + pasta
+  `_internal\` com as bibliotecas já descompactadas. Abre em ~1 s, contra 2,5-7 s do
+  antigo arquivo único (`--onefile`), que lia ~30 MB pela rede e descompactava tudo
+  em `%TEMP%` a cada abertura (com nova análise do antivírus).
+- Release publica `EmissorAutorizacaoOnibus.zip` (com o `.exe` e `_internal\` na raiz)
+  e o `emissor_config.ini` de modelo. Para atualizar: desbloquear o .zip
+  (Propriedades > Desbloquear) e extrair dentro da pasta do programa no servidor,
+  substituindo; `emissor_config.ini` e `chave_assinatura.pem` não são tocados.
+  Atualizar fora do horário de uso (arquivos em uso não podem ser substituídos).
 - Atalho no Desktop dos usuários via GPO (Group Policy Preferences → Shortcuts)
-- Servidor adicionado à zona "Intranet Local" via GPO para evitar aviso de
-  segurança do Windows ao executar .exe de rede
+  apontando para o `.exe` na pasta do servidor
+- Servidor adicionado à zona "Intranet Local" via GPO (`file://VSRV-SIS-ONIBUS` = 1)
+  para evitar o aviso "Deseja executar este arquivo?"; arquivos baixados da internet
+  também precisam ser desbloqueados (`Unblock-File`), senão o aviso aparece sempre
 
 ## Travamento da interface (investigado)
 A janela congelava sozinha, sem interação, poucos segundos após abrir. Diagnóstico
