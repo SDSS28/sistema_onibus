@@ -204,53 +204,74 @@ def obter_proximo_numero() -> tuple[str, bool]:
         return f"PROV-{_proximo_numero_em(pasta_local)}", True
 
 
+def _travar_arquivo(fd: int) -> bool:
+    """Tenta travar o arquivo aberto em fd sem esperar. A trava é do sistema operacional:
+    é liberada sozinha se o programa fechar, e não exige criar nem apagar arquivos."""
+    if sys.platform == "win32":
+        import msvcrt
+        os.lseek(fd, 0, os.SEEK_SET)
+        try:
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            return True
+        except OSError:
+            return False
+    import fcntl
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True
+    except OSError:
+        return False
+
+
+def _destravar_arquivo(fd: int) -> None:
+    if sys.platform == "win32":
+        import msvcrt
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+    else:
+        import fcntl
+        fcntl.flock(fd, fcntl.LOCK_UN)
+
+
 def _proximo_numero_em(pasta_controle: str) -> str:
     """Gera o próximo número sequencial (NNNN/AAAA), reiniciando a cada ano.
-    Usa um arquivo de controle + lock para evitar números duplicados quando
-    duas pessoas geram documentos ao mesmo tempo."""
+    O contador.txt é travado enquanto o número é lido e gravado, para que duas pessoas
+    gerando documentos ao mesmo tempo nunca recebam o mesmo número. Nenhum arquivo é
+    apagado, então os usuários não precisam de permissão de exclusão."""
     os.makedirs(pasta_controle, exist_ok=True)
     caminho_contador = os.path.join(pasta_controle, "contador.txt")
-    caminho_lock = os.path.join(pasta_controle, "contador.lock")
-
     ano_atual = datetime.now().year
 
-    tentativas = 0
-    while True:
-        try:
-            with open(caminho_lock, "x"):
-                pass
-            break
-        except FileExistsError:
+    fd = os.open(caminho_contador, os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0))
+    try:
+        tentativas = 0
+        while not _travar_arquivo(fd):
             tentativas += 1
             if tentativas > 50:  # ~10s de espera
                 raise RuntimeError(
-                    "Não foi possível obter a trava do contador de numeração "
-                    "(outro usuário pode estar gerando um documento agora, ou o "
-                    "arquivo _controle\\contador.lock ficou travado no servidor — "
-                    "nesse caso, avise o TI para removê-lo manualmente)."
+                    "Não foi possível obter a numeração: outro usuário está gerando um documento "
+                    "neste momento. Aguarde alguns segundos e tente de novo."
                 )
             time.sleep(0.2)
-
-    try:
-        ultimo_ano, ultimo_numero = ano_atual, 0
-        if os.path.exists(caminho_contador):
-            with open(caminho_contador, "r", encoding="utf-8") as f:
-                conteudo = f.read().strip()
+        try:
+            os.lseek(fd, 0, os.SEEK_SET)
+            conteudo = os.read(fd, 64).decode("utf-8").strip()
+            ultimo_ano, ultimo_numero = ano_atual, 0
             if conteudo:
                 ano_salvo, numero_salvo = conteudo.split("/")
                 ultimo_ano, ultimo_numero = int(ano_salvo), int(numero_salvo)
 
-        novo_numero = 1 if ultimo_ano != ano_atual else ultimo_numero + 1
+            novo_numero = 1 if ultimo_ano != ano_atual else ultimo_numero + 1
 
-        with open(caminho_contador, "w", encoding="utf-8") as f:
-            f.write(f"{ano_atual}/{novo_numero}")
-
-        return f"{novo_numero:04d}/{ano_atual}"
+            dados = f"{ano_atual}/{novo_numero}".encode("utf-8")
+            os.lseek(fd, 0, os.SEEK_SET)
+            os.write(fd, dados)
+            os.ftruncate(fd, len(dados))
+            return f"{novo_numero:04d}/{ano_atual}"
+        finally:
+            _destravar_arquivo(fd)
     finally:
-        try:
-            os.remove(caminho_lock)
-        except OSError:
-            pass
+        os.close(fd)
 
 
 def _gravar_arquivo(pasta: str, nome_arquivo: str, conteudo: bytes) -> str:
@@ -895,6 +916,24 @@ def autoteste() -> None:
         with open(MODELO_PAGINA_VALIDACAO, encoding="utf-8") as f:
             if "__CHAVE_PUBLICA__" not in f.read():
                 raise RuntimeError("Modelo da página de validação não encontrado ou inválido.")
+        # Numeração: sequência correta, trava do sistema funcionando e nenhum arquivo extra.
+        pasta_num = tempfile.mkdtemp()
+        ano = datetime.now().year
+        if [_proximo_numero_em(pasta_num) for _ in range(2)] != [f"0001/{ano}", f"0002/{ano}"]:
+            raise RuntimeError("Numeração sequencial incorreta.")
+        contador = os.path.join(pasta_num, "contador.txt")
+        fd1 = os.open(contador, os.O_RDWR | getattr(os, "O_BINARY", 0))
+        fd2 = os.open(contador, os.O_RDWR | getattr(os, "O_BINARY", 0))
+        try:
+            if not _travar_arquivo(fd1) or _travar_arquivo(fd2):
+                raise RuntimeError("A trava do contador de numeração não está funcionando.")
+            _destravar_arquivo(fd1)
+        finally:
+            os.close(fd1)
+            os.close(fd2)
+        if os.listdir(pasta_num) != ["contador.txt"]:
+            raise RuntimeError(f"Arquivos inesperados na pasta de controle: {os.listdir(pasta_num)}")
+
         caminho_qr = os.path.join(pasta, "qr.png")
         gerar_qr_code(url, caminho_qr)
         caminho_pdf = os.path.join(pasta, "autoteste.pdf")

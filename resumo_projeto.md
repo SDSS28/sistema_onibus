@@ -16,9 +16,11 @@ Lei 5.111/2025 e no Decreto nº 645/2025. Gera um PDF com:
   A zona sai no PDF e no QR Code, e os horários de entrada/saída são validados
   contra as janelas da zona (Art. 17). Tabelas em `DESTINOS_ZAC` e `JANELAS_ZAC`
 - Calendário (tkcalendar, em português) para as datas e seletores de hora/minuto
-- Numeração sequencial automática (NNNN/AAAA, reinicia por ano), com trava
-  (lock) em arquivo de controle no servidor para evitar duplicidade entre
-  usuários simultâneos
+- Numeração sequencial automática (NNNN/AAAA, reinicia por ano). O `contador.txt`
+  em `_controle` é travado pelo sistema operacional enquanto o número é lido e
+  gravado (sem arquivo de lock), evitando duplicidade entre usuários simultâneos.
+  Nenhum arquivo é apagado no servidor: os usuários não precisam de permissão de
+  exclusão. Se o programa fechar no meio, a trava é liberada sozinha.
 - Mescla o PDF gerado com o comprovante de pagamento (PDF ou imagem) anexado
   pelo usuário, formando um documento único de duas páginas
 - Salva o resultado na pasta centralizada de rede, em `Autorizações Emitidas\AAAA\MM`
@@ -51,7 +53,8 @@ py -m pip install -r requirements.txt
 - Pasta de armazenamento precisa ter permissão de escrita para os usuários/
   máquinas que rodam o `.exe` (grupo AD sugerido: `GG-Autorizacoes-Usuarios`).
 - Pasta `_controle` dentro do armazenamento é criada automaticamente pelo
-  script na primeira execução (guarda `contador.txt` e o lock da numeração).
+  script na primeira execução (guarda o `contador.txt` da numeração). Um
+  `contador.lock` deixado por versões antigas pode ser apagado pelo TI.
 
 ## Geração do .exe (automática)
 O GitHub gera o `.exe` sozinho (`.github/workflows/gerar-exe.yml`, Windows +
